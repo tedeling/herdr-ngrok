@@ -62,3 +62,15 @@ test("secretsOf: a block scalar gives its lines, never the indicator", () => {
   assert.deepEqual(secretsOf("authtoken: |\n  abc\n  # def\nregion: eu\n"), ["abc", "# def"]);
   assert.deepEqual(secretsOf("    password: >-\n        p1\n    addr: 1\n"), ["p1"]);
 });
+
+test("secretsOf: a comment between a key and its items does not end the block", () => {
+  // A comment at column 0, and a comment at the indent of the key.
+  for (const comment of ['#            - "old:pass"', "        # first user"]) {
+    assert.deepEqual(secretsOf(`        basic_auth:\n${comment}\n            - "user:pass"\n`), ["user:pass"], `deeper list, ${comment}`);
+    assert.deepEqual(secretsOf(`        basic_auth:\n${comment}\n        - "user:pass"\n`), ["user:pass"], `indentless list, ${comment}`);
+    assert.deepEqual(secretsOf(`        authtoken:\n${comment}\n            abc123\n`), ["abc123"], `next line, ${comment}`);
+  }
+});
+
+test("secretsOf: a # line inside a block scalar is content", () =>
+  assert.deepEqual(secretsOf("    password: |\n        # p1\n        p2\n    addr: 1\n"), ["# p1", "p2"]));

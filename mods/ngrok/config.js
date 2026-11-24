@@ -148,6 +148,8 @@ export function secretsOf(text) {
     const line = plainLine(raw);
     if (isBlank(line)) continue;
     const indent = indentOf(line);
+    // A comment does not end a block. Only in a block scalar is a deeper "#" line text.
+    if (isComment(line) && !(open.at(-1)?.scalar && indent > open.at(-1).indent)) continue;
     const body = line.trim();
     const item = /^-(?:\s+(.*))?$/.exec(body);
     // A block ends at a line with no more indent than its key. A list item at the indent of the key
@@ -159,7 +161,6 @@ export function secretsOf(text) {
       secrets.push(body);
       continue;
     }
-    if (isComment(line)) continue;
     if (inside && item) {
       if (item[1]) add(item[1]);
       continue;
