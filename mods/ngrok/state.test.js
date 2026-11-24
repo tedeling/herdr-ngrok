@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseConfig } from "./config.js";
-import { agentError, chooseAgent, controlsOf, domainOf, groupRows, listenerCommand, localTip, mergeRows, parseLive, parseLsof, parseSs, postBody, rising, shortName } from "./state.js";
+import { agentError, chooseAgent, controlsOf, domainOf, groupRows, listenerCommand, localTip, mergeRows, parseLive, parseLsof, parseSs, postBody, rising, shortName, showsNoTunnels } from "./state.js";
 import { FILE } from "./fixture.js";
 
 const live = (apiPort, name, host, port) => ({ apiPort, name, host, port });
@@ -130,4 +130,17 @@ test("listenerCommand: lsof on Darwin, ss elsewhere", () => {
   assert.deepEqual(listenerCommand("Darwin"), { command: "lsof", args: ["-nP", "-iTCP", "-sTCP:LISTEN", "-F", "pcn"], parse: parseLsof });
   assert.deepEqual(listenerCommand("Linux"), { command: "ss", args: ["-ltnpH"], parse: parseSs });
   assert.equal(listenerCommand("FreeBSD").command, "ss");
+});
+
+const EMPTY = { loading: false, blocked: null, fileError: null, loadError: null, rows: [], adding: false };
+
+test("showsNoTunnels: an empty config", () => assert.equal(showsNoTunnels(EMPTY), true));
+
+test("showsNoTunnels: not after a load error, such as a hub that does not answer", () =>
+  assert.equal(showsNoTunnels({ ...EMPTY, loadError: "hub.example does not answer (timeout)" }), false));
+
+test("showsNoTunnels: not while it loads, blocked, with a file error, with rows, or with the add row", () => {
+  for (const change of [{ loading: true }, { blocked: "Waiting for the sync" }, { fileError: "bad" }, { rows: [{}] }, { adding: true }]) {
+    assert.equal(showsNoTunnels({ ...EMPTY, ...change }), false, JSON.stringify(change));
+  }
 });

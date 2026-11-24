@@ -7,7 +7,7 @@ import { dirname } from "path";
 import { applyEdit } from "./apply.js";
 import { parseConfig } from "./config.js";
 import { parseHost, parsePort } from "./edit.js";
-import { controlsOf, groupRows, localTip, mergeRows, rising, shortName } from "./state.js";
+import { controlsOf, groupRows, localTip, mergeRows, rising, shortName, showsNoTunnels } from "./state.js";
 import { hubError, loadTarget } from "./hub.js";
 import { configPath, makeIo } from "./io.js";
 
@@ -424,7 +424,7 @@ export default class Tunnels extends View {
       .when(Boolean(blocked), (e) => e.child(div().flex_none().px(16).py(4).text_size(11).text_color(t.dim).child(blocked)))
       .when(Boolean(this.fileError || this.loadError), (e) =>
         e.child(div().flex_none().px(16).py(4).text_size(11).text_color(t.ansi1).child(this.fileError ?? this.loadError)))
-      .when(!this.loading && !blocked && !this.fileError && this.rows.length === 0 && !this.adding, (e) =>
+      .when(showsNoTunnels({ loading: this.loading, blocked, fileError: this.fileError, loadError: this.loadError, rows: this.rows, adding: this.adding }), (e) =>
         e.child(div().flex_none().px(16).py(4).text_size(11).text_color(t.dim).child("No tunnels in the config.")))
       .child(v_flex().id("ngrok-list").flex_1().min_h(0).px(8).overflow_y_scrollbar()
         .children(groupRows(this.rows).flatMap((group) => [this.groupHeader(group.domain, t), ...group.rows.map((row) => this.row(row, t))]))

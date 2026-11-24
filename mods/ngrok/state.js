@@ -228,3 +228,11 @@ export function controlsOf(row, { hovered, confirming, busy }) {
   const sync = !confirming && (row.state === "down" || row.state === "drift");
   return { note: false, sync, remove: confirming ? "remove?" : "✕" };
 }
+
+/**
+ * True when the panel says "No tunnels in the config.". After a load error, for example when the hub
+ * does not answer, the panel does not know the tunnels, so it does not say that.
+ */
+export function showsNoTunnels({ loading, blocked, fileError, loadError, rows, adding }) {
+  return !loading && !blocked && !fileError && !loadError && rows.length === 0 && !adding;
+}
