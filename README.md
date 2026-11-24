@@ -71,10 +71,14 @@ ngrok refuses unknown keys in its config. So the panel switches a tunnel off wit
 marker `#herdr-off#` in front of each line of the tunnel. `ngrok start --all` skips such a tunnel.
 
 A tunnel with a nested field, such as `basic_auth`, gets no live change. The API cannot take the
-nested field, so a restart through the API could drop it. The panel saves the file and asks you to
-restart ngrok.
+nested field, so a restart through the API could drop it. A tunnel with a secret field, such as
+`auth: "user:pass"`, also gets no live change. The panel talks to the API with `curl`, and other
+processes can read the arguments of `curl`. For these two tunnel types, the panel saves the file
+and asks you to restart ngrok.
 
-The panel never shows your `authtoken`, and it talks only to `127.0.0.1`.
+A secret is the value of a field whose name is `api_key`, or holds `auth`, `token`, `secret`, or
+`password`. The panel hides each secret in its messages, it never puts a secret in the arguments
+of a command, and it talks only to `127.0.0.1`.
 
 ## On another computer
 
@@ -96,8 +100,9 @@ On the hub, the panel works as follows:
 - It writes a change with `hc file edit --on hub-box`. The panel sends only the changed lines and
   the lines around them that make the place unique. `hc` replaces the file atomically and keeps
   its mode. If the old lines are not in the file, the panel reads the file again.
-- It never sends a line with a secret to `hc`, such as the `authtoken` or a `basic_auth` item. If a
-  change touches such a line, the panel tells you to edit `ngrok.yml` on the hub by hand.
+- It never sends a line with a secret to `hc`, such as the `authtoken` or a `basic_auth` item. A
+  secret in a comment line counts too, because a value that you commented out often still works.
+  If a change touches such a line, the panel tells you to edit `ngrok.yml` on the hub by hand.
 - Herdr can watch only a local folder, so the panel reads the file at each refresh (5 seconds).
 - If the hub does not answer, the panel shows `<hub> does not answer (<reason>)` and tries again
   at the next refresh.

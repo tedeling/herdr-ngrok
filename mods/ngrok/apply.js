@@ -25,6 +25,9 @@ export const PROBE_PREFIX = "herdr-probe-";
  */
 
 const messageOf = (e) => String(e?.message ?? e);
+// A POST cannot carry a nested field. A secret field must not go into the POST body, because the
+// body is an argument of curl, and on the hub this argument also goes through herdr-core.
+const postable = (tunnel) => !tunnel.nested && !tunnel.secret;
 const hostTaken = (tunnels, host, name) => tunnels.some((t) => t.host === host && t.name !== name);
 
 /** The new file text and the name of the edited tunnel. */
@@ -93,9 +96,9 @@ export async function applyEdit(io, edit) {
   const prior = before.tunnels.find((t) => t.name === name) ?? null;
   const next = after.find((t) => t.name === name) ?? null;
   const startable = Boolean(next && !next.off);
-  // A POST cannot carry a nested field. So a nested tunnel that must start again gets no live change,
-  // but a DELETE (off, remove) is safe.
-  if (startable && next.nested) return { ok: true, error: null, note: NESTED };
+  // A tunnel that cannot go in a POST (see postable) and must start again gets no live change, but a
+  // DELETE (off, remove) is safe.
+  if (startable && !postable(next)) return { ok: true, error: null, note: NESTED };
 
   // Only a live tunnel with a name from the file belongs to the panel. A tunnel of another agent with
   // the same name as a new tunnel must not stop.
@@ -127,7 +130,7 @@ export async function applyEdit(io, edit) {
       if (!running) return fail(startError + undoError);
       // Try to start the tunnel as it was before. The agent keeps the name of the failed start, so
       // this try can fail too, and then the user must know that the host is down.
-      const restored = changed && prior && !prior.off && !prior.nested && (await io.start(apiPort, postBody(prior))) === null;
+      const restored = changed && prior && !prior.off && postable(prior) && (await io.start(apiPort, postBody(prior))) === null;
       return fail(startError + undoError + (restored ? "" : ` ${DOWN}`));
     }
   }

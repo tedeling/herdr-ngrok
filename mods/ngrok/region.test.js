@@ -2,6 +2,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { REGION_NONE, REGION_SECRET, editOnHub, editRegion } from "./region.js";
+import { removeTunnel, setOff } from "./edit.js";
+import { FILE } from "./fixture.js";
 
 const OLD = 'version: "2"\nauthtoken: SECRET123\ntunnels:\n    api:\n        addr: 8020\n    web:\n        addr: 3000\n';
 const S = ["SECRET123"];
@@ -137,4 +139,25 @@ test("editOnHub: a basic_auth item never goes to hc", async () => {
   const { hc, calls } = fakeHc({ code: 0, stdout: "", stderr: "" });
   await assert.rejects(editOnHub(hc, TARGET, PATH, "tunnels:\n", text), { hub: true, message: REGION_SECRET });
   assert.deepEqual(calls, []);
+});
+
+test("editOnHub: a commented-out basic_auth never goes to hc", async () => {
+  const text = 'tunnels:\n    a:\n        addr: 1\n        # basic_auth:\n        #     - "user:pass"\n    b:\n        addr: 2\nversion: "2"\n';
+  const { hc, calls } = fakeHc({ code: 0, stdout: "", stderr: "" });
+  await assert.rejects(editOnHub(hc, TARGET, PATH, removeTunnel(text, "a"), text), { hub: true, message: REGION_SECRET });
+  assert.deepEqual(calls, []);
+});
+
+test("editOnHub: a commented-out authtoken never goes to hc", async () => {
+  const { hc, calls } = fakeHc({ code: 0, stdout: "", stderr: "" });
+  await assert.rejects(editOnHub(hc, TARGET, PATH, "# authtoken: OLD123\ntunnels:\n", "# authtoken: OLD123\n"),
+    { hub: true, message: REGION_SECRET });
+  assert.deepEqual(calls, []);
+});
+
+test("editOnHub: an off tunnel with no secret stays editable", async () => {
+  const { hc, calls } = fakeHc({ code: 0, stdout: json({ ok: true }), stderr: "" });
+  await editOnHub(hc, TARGET, PATH, setOff(FILE, "docs", false), FILE);
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0].includes(`--old=#herdr-off#    docs:\n#herdr-off#        addr: "localhost:7000"\n#herdr-off#        proto: http\n#herdr-off#        hostname: docs.example.dev\n`));
 });

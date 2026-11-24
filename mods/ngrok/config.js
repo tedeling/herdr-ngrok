@@ -15,6 +15,7 @@ const VERSION_ERROR = "This panel reads only ngrok config version 2.";
  * @property {string} proto
  * @property {Record<string, string>} scalars  Each scalar field of the block, unquoted.
  * @property {boolean} nested  The block has a field with a map or a list.
+ * @property {boolean} secret  The block has a scalar field with a secret, such as `auth: "user:pass"`.
  * @property {number} start  The index of the name line.
  * @property {number} end  The index after the last line of the block.
  */
@@ -85,7 +86,7 @@ export function parseConfig(text) {
       current = null;
       const name = isComment(line) ? null : /^([^:#]+):\s*$/.exec(line.trim());
       if (!name) continue;
-      current = { name: unquote(name[1]), off: lines[i].startsWith(OFF_MARKER), scalars: {}, nested: false, start: i, end: i + 1 };
+      current = { name: unquote(name[1]), off: lines[i].startsWith(OFF_MARKER), scalars: {}, nested: false, secret: false, start: i, end: i + 1 };
       fieldIndent = -1;
       tunnels.push(current);
       continue;
@@ -101,7 +102,10 @@ export function parseConfig(text) {
     }
     const value = field[2].trim();
     if (value === "" || value.startsWith("[") || value.startsWith("{")) current.nested = true;
-    else current.scalars[field[1]] = unquote(value);
+    else {
+      current.scalars[field[1]] = unquote(value);
+      if (isSecretField(field[1], value)) current.secret = true;
+    }
   }
 
   return {
@@ -127,6 +131,19 @@ const NOT_SECRET = /^(true|false|null|~|[-+]?\d+(\.\d+)?)$/i;
 const BLOCK_SCALAR = /^[|>][-+0-9]*(\s+#.*)?$/;
 const FIELD = /^["']?([A-Za-z_][\w.-]*)["']?\s*:(?:\s+(.*))?$/;
 
+// The comment markers at the start of a line, after the indent.
+const COMMENT_MARKERS = /^([ \t]*)(#+ ?)/;
+
+/** The value as a secret, or null when it is empty or a bare value that NOT_SECRET matches. */
+function secretValue(raw) {
+  const value = unquote(raw);
+  const bare = !/^["']/.test(raw.trim());
+  return value && !(bare && NOT_SECRET.test(value)) ? value : null;
+}
+
+/** True when a field with this key and this value (as it is in the file) holds a secret. */
+export const isSecretField = (key, raw) => SECRET_KEY.test(key) && secretValue(raw) !== null;
+
 /**
  * The values of the secret fields, so that a message can hide them and an edit can stay away from
  * them. A secret field is a key that SECRET_KEY matches. These parts of its value count:
@@ -134,18 +151,28 @@ const FIELD = /^["']?([A-Za-z_][\w.-]*)["']?\s*:(?:\s+(.*))?$/;
  * - each item of a block list under it, also at the indent of the key (`- "user:pass"`);
  * - a value on the lines under it;
  * - each line of a block scalar (`|` or `>`), but not the indicator.
+ *
+ * A person often comments out a field to switch it off, and its value often still works. So a
+ * second scan reads each line with its comment markers replaced by spaces, and its values count
+ * too. This scan can find a value that is not a secret, but that error is on the safe side.
  */
 export function secretsOf(text) {
+  const lines = text.split("\n").map(plainLine);
+  // A space for each marker character keeps the column of the text after the marker.
+  const uncommented = lines.map((line) => line.replace(COMMENT_MARKERS, (_, indent, marker) => indent + " ".repeat(marker.length)));
+  return [...new Set([...scanSecrets(lines), ...scanSecrets(uncommented)])];
+}
+
+/** The secret values in the lines, which have no OFF_MARKER. See secretsOf. */
+function scanSecrets(lines) {
   const secrets = [];
   const add = (raw) => {
-    const value = unquote(raw);
-    const bare = !/^["']/.test(raw.trim());
-    if (value && !(bare && NOT_SECRET.test(value))) secrets.push(value);
+    const value = secretValue(raw);
+    if (value !== null) secrets.push(value);
   };
   /** The secret keys whose value block the loop reads now, the innermost last. @type {{ indent: number, scalar: boolean }[]} */
   const open = [];
-  for (const raw of text.split("\n")) {
-    const line = plainLine(raw);
+  for (const line of lines) {
     if (isBlank(line)) continue;
     const indent = indentOf(line);
     // A comment does not end a block. Only in a block scalar is a deeper "#" line text.

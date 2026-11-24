@@ -3,6 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { applyEdit } from "./apply.js";
 import { parseConfig } from "./config.js";
+import { setOff } from "./edit.js";
 import { FILE } from "./fixture.js";
 
 const live = (apiPort, name, host, port) => ({ apiPort, name, host, port });
@@ -159,4 +160,45 @@ test("duplicate host", async () => {
   const io = fakeIo(FILE, {});
   assert.equal((await applyEdit(io, { kind: "add", host: "api.example.dev", port: 1 })).error, "Another tunnel uses this host.");
   assert.equal(io.text, FILE);
+});
+
+// A tunnel with a scalar secret field, the v2 form of basic auth.
+const LOCKED = FILE.replace('version: "2"', '    locked:\n        addr: 8030\n        proto: http\n        hostname: locked.example.dev\n        auth: "user:pass"\nversion: "2"');
+const LOCKED_LIVE = [live(4041, "api", "api.example.dev", 8020), live(4041, "locked", "locked.example.dev", 8030)];
+
+test("scalar secret tunnel: a port edit writes the file and asks for a restart, with no agent call", async () => {
+  const io = fakeIo(LOCKED, { live: LOCKED_LIVE });
+  const r = await applyEdit(io, { kind: "port", name: "locked", port: 8031 });
+  assert.deepEqual(r, { ok: true, error: null, note: "Restart ngrok to apply this change." });
+  assert.ok(io.text.includes("        addr: 8031\n"));
+  assert.deepEqual(agentCalls(io), []);
+});
+
+test("scalar secret tunnel: a host edit sends no probe", async () => {
+  const io = fakeIo(LOCKED, { live: LOCKED_LIVE });
+  const r = await applyEdit(io, { kind: "host", name: "locked", host: "new.example.dev" });
+  assert.equal(r.note, "Restart ngrok to apply this change.");
+  assert.deepEqual(io.startBodies, []);
+});
+
+test("scalar secret tunnel: on and sync ask for a restart, with no agent call", async () => {
+  const off = fakeIo(setOff(LOCKED, "locked", true), { live: [live(4041, "api", "api.example.dev", 8020)] });
+  assert.equal((await applyEdit(off, { kind: "on", name: "locked" })).note, "Restart ngrok to apply this change.");
+  assert.deepEqual(agentCalls(off), []);
+  const sync = fakeIo(LOCKED, { live: [live(4041, "api", "api.example.dev", 8020), live(4041, "locked", "locked.example.dev", 8099)] });
+  assert.equal((await applyEdit(sync, { kind: "sync", name: "locked" })).note, "Restart ngrok to apply this change.");
+  assert.deepEqual(agentCalls(sync), []);
+});
+
+test("scalar secret tunnel: off still stops it", async () => {
+  const io = fakeIo(LOCKED, { live: LOCKED_LIVE });
+  assert.deepEqual(await applyEdit(io, { kind: "off", name: "locked" }), { ok: true, error: null, note: null });
+  assert.deepEqual(io.calls.filter((c) => c[0] === "stop").map((c) => c[2]), ["locked"]);
+});
+
+test("a tunnel next to a scalar secret tunnel still applies live, and no body holds the secret", async () => {
+  const io = fakeIo(LOCKED, { live: LOCKED_LIVE });
+  assert.deepEqual(await applyEdit(io, { kind: "port", name: "api", port: 9100 }), { ok: true, error: null, note: null });
+  assert.deepEqual(agentCalls(io), ["stop", "start"]);
+  assert.ok(io.startBodies.every((b) => !JSON.stringify(b).includes("user:pass")));
 });

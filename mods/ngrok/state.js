@@ -104,9 +104,14 @@ export function chooseAgent(name, tunnels, live) {
   return best;
 }
 
-/** The body for POST /api/tunnels. A nested field cannot go in the body, so a tunnel with one throws. */
+/**
+ * The body for POST /api/tunnels. A nested field cannot go in the body, so a tunnel with one throws.
+ * The body goes into the arguments of curl, which other processes can read. So a tunnel with a
+ * secret field throws too.
+ */
 export function postBody(tunnel) {
   if (tunnel.nested) throw new Error(`The tunnel ${tunnel.name} has a nested field.`);
+  if (tunnel.secret) throw new Error(`The tunnel ${tunnel.name} has a secret field.`);
   const body = { name: tunnel.name };
   for (const [key, value] of Object.entries(tunnel.scalars)) body[key] = value === "true" ? true : value === "false" ? false : value;
   return body;

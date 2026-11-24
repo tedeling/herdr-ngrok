@@ -46,6 +46,11 @@ test("postBody", () =>
 
 test("postBody refuses nested", () => assert.throws(() => postBody(tunnels[2])));
 
+test("postBody refuses a scalar secret field, and its error does not hold the secret", () => {
+  const [locked] = parseConfig('tunnels:\n    locked:\n        addr: 8030\n        auth: "user:pass"\n').tunnels;
+  assert.throws(() => postBody(locked), (e) => !String(e.message).includes("user:pass"));
+});
+
 test("agentError: no repeated text", () =>
   assert.equal(agentError('{"msg":"failed to start tunnel","details":{"err":"failed to start tunnel: host not reserved"}}'),
     "failed to start tunnel: host not reserved"));
