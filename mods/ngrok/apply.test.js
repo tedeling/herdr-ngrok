@@ -9,7 +9,7 @@ const live = (apiPort, name, host, port) => ({ apiPort, name, host, port });
 
 // An Io that holds the file text in memory and records each call. Like the real agent, it keeps the
 // name of a tunnel whose start failed, and refuses a later start with that name.
-function fakeIo(text, { stale = false, checkError = null, startErrors = [], live = [] } = {}) {
+function fakeIo(text, { stale = false, writeError = null, checkError = null, startErrors = [], live = [] } = {}) {
   const blocked = new Set();
   const io = {
     text,
@@ -18,6 +18,7 @@ function fakeIo(text, { stale = false, checkError = null, startErrors = [], live
     async read() { io.calls.push(["read"]); return io.text; },
     async write(next, expected) {
       io.calls.push(["write"]);
+      if (writeError) throw writeError;
       if (stale || expected !== io.text) throw new Error("stale");
       io.text = next;
     },
@@ -49,6 +50,13 @@ test("stale write: file stays", async () => {
   const io = fakeIo(FILE, { stale: true });
   const r = await applyEdit(io, { kind: "port", name: "api", port: 1 });
   assert.equal(r.error, "The file changed outside the panel. The panel read it again.");
+  assert.equal(io.text, FILE);
+});
+
+test("write: a hub error shows as it is", async () => {
+  const io = fakeIo(FILE, { writeError: Object.assign(new Error("hub.example does not answer (x)"), { hub: true }) });
+  const r = await applyEdit(io, { kind: "port", name: "api", port: 1 });
+  assert.equal(r.error, "hub.example does not answer (x)");
   assert.equal(io.text, FILE);
 });
 

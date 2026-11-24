@@ -119,12 +119,45 @@ export function parseConfig(text) {
   };
 }
 
-/** The values of the secret fields, so that a message can hide them. */
+// A key is secret if its name is api_key, or if its name holds one of these words.
+const SECRET_KEY = /^api_key$|auth|token|secret|password/i;
+// These bare values are not secrets, for example `inspect: true`. A quoted value always counts.
+const NOT_SECRET = /^(true|false|null|~|[-+]?\d+(\.\d+)?)$/i;
+
+/**
+ * The values of the secret fields, so that a message can hide them and an edit can stay away from
+ * them. A secret field is a key that SECRET_KEY matches. Its value counts, and each item of a list
+ * under it counts, as a block list (`- "user:pass"`) or as an inline list (`["user:pass"]`).
+ */
 export function secretsOf(text) {
   const secrets = [];
-  for (const line of text.split("\n")) {
-    const match = /^\s*(authtoken|api_key)\s*:\s*(.+)$/.exec(plainLine(line));
-    if (match && unquote(match[2])) secrets.push(unquote(match[2]));
+  const add = (raw) => {
+    const value = unquote(raw);
+    const bare = !/^["']/.test(raw.trim());
+    if (value && !(bare && NOT_SECRET.test(value))) secrets.push(value);
+  };
+  // The indent of the secret key whose block the loop reads now, or -1.
+  let blockIndent = -1;
+  for (const raw of text.split("\n")) {
+    const line = plainLine(raw);
+    if (isBlank(line) || isComment(line)) continue;
+    const indent = indentOf(line);
+    if (blockIndent >= 0 && indent <= blockIndent) blockIndent = -1;
+    const item = blockIndent >= 0 ? /^-\s+(.*)$/.exec(line.trim()) : null;
+    if (item) {
+      add(item[1]);
+      continue;
+    }
+    const field = /^["']?([A-Za-z_][\w.-]*)["']?\s*:(?:\s+(.*))?$/.exec(line.trim());
+    if (!field || !SECRET_KEY.test(field[1])) continue;
+    const value = (field[2] ?? "").trim();
+    if (value === "" || value.startsWith("#")) {
+      if (blockIndent < 0) blockIndent = indent;
+    } else if (value.startsWith("[")) {
+      value.replace(/\]\s+#.*$/, "]").replace(/^\[|\]$/g, "").split(",").forEach(add);
+    } else {
+      add(value);
+    }
   }
   return secrets;
 }

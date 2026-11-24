@@ -30,3 +30,23 @@ test("parseAddr: three forms", () => {
 });
 
 test("redact: hides the authtoken", () => assert.equal(redact("bad token SECRET123", secretsOf(FILE)), "bad token <secret>"));
+
+test("secretsOf: authtoken and a basic_auth item of the fixture", () => assert.deepEqual(secretsOf(FILE), ["SECRET123", "u:p"]));
+
+test("secretsOf: a basic_auth block list", () =>
+  assert.deepEqual(secretsOf('    a:\n        basic_auth:\n            - "user:pass"\n            - other:word\n        addr: 1\n    - "not:this"\n'),
+    ["user:pass", "other:word"]));
+
+test("secretsOf: an inline list", () =>
+  assert.deepEqual(secretsOf('        basic_auth: ["user:pass", \'a:b\']\n'), ["user:pass", "a:b"]));
+
+test("secretsOf: each key with auth, token, secret, or password in its name", () =>
+  assert.deepEqual(secretsOf("api_key: k1\nclient_secret: s1\nWebhook_Token: 't1'\ndb_password: p1\naddr: 8020\n"), ["k1", "s1", "t1", "p1"]));
+
+test("secretsOf: an off line counts", () =>
+  assert.deepEqual(secretsOf('#herdr-off#        basic_auth:\n#herdr-off#            - "user:pass"\n'), ["user:pass"]));
+
+test("secretsOf: a skip: true style value does not count", () =>
+  assert.deepEqual(secretsOf("auth_skip: true\ntoken_ttl: 300\npassword_set: False\nsecret: null\noauth: ~\nbasic_auth: [1, true]\n"), []));
+
+test("redact: hides a basic_auth item", () => assert.equal(redact('bad "u:p"', secretsOf(FILE)), 'bad "<secret>"'));

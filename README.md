@@ -76,6 +76,32 @@ restart ngrok.
 
 The panel never shows your `authtoken`, and it talks only to `127.0.0.1`.
 
+## On another computer
+
+You can keep ngrok and your dev servers on one computer, the hub, and use Herdr on other computers
+too. The panel then follows `hub.json` of a hub registry: a sync mod writes this file into the app
+folder (`~/.config/herdr-app`). The panel reads it again at each refresh.
+
+| App folder | The panel |
+|---|---|
+| No `registry/registry.json` | Runs on this computer, as above. |
+| `hub.json` with `"state": "local"` | Runs on this computer. |
+| `hub.json` with `"state": "remote"` and `"machine": "hub-box"` | Runs each command on `hub-box` through herdr-core (`hc`). |
+| `hub.json` with `"state": "missing"`, or no `hub.json` | Runs nothing, and tells you what to do. |
+
+On the hub, the panel works as follows:
+
+- It reads `ngrok.yml` on the hub, and runs `ngrok config check`, `curl`, and the listener check
+  there. So `127.0.0.1` is the hub. It asks the hub for its OS with `uname -s`.
+- It writes a change with `hc file edit --on hub-box`. The panel sends only the changed lines and
+  the lines around them that make the place unique. `hc` replaces the file atomically and keeps
+  its mode. If the old lines are not in the file, the panel reads the file again.
+- It never sends a line with a secret to `hc`, such as the `authtoken` or a `basic_auth` item. If a
+  change touches such a line, the panel tells you to edit `ngrok.yml` on the hub by hand.
+- Herdr can watch only a local folder, so the panel reads the file at each refresh (5 seconds).
+- If the hub does not answer, the panel shows `<hub> does not answer (<reason>)` and tries again
+  at the next refresh.
+
 ## Tests
 
 `node --test mods/ngrok/`

@@ -2,12 +2,13 @@
 // A click on the host or the port edits it, a click on the dot switches the tunnel on or off.
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Input, InputState } from "gpui-base";
-import { layout, settings, theme, watchFolder } from "herdr";
+import { appHome, layout, readTextFile, settings, theme, watchFolder } from "herdr";
 import { dirname } from "path";
 import { applyEdit } from "./apply.js";
 import { parseConfig } from "./config.js";
 import { parseHost, parsePort } from "./edit.js";
 import { controlsOf, groupRows, localTip, mergeRows, rising, shortName } from "./state.js";
+import { hubError, loadTarget } from "./hub.js";
 import { configPath, makeIo } from "./io.js";
 
 const POLL_MS = 5000;
@@ -17,6 +18,7 @@ const PORT_WIDTH = 40;
 const ADD_KEY = "add";
 const PORT_HELP = "Type a port from 1 to 65535.";
 const HOST_HELP = "Type a host such as app.example.dev.";
+const LOCAL = { mode: "local" };
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -46,10 +48,15 @@ function noteOf(row) {
 export default class Tunnels extends View {
   init(_props, cx) {
     this.handle = cx.focus_handle();
+    // Where the panel runs, from hub.json (see hub.js). The poll reads it again each time.
+    this.target = null;
     this.io = null;
+    this.path = null;
+    // The watch of the folder of ngrok.yml. Only a local file has one.
+    this.watch = null;
     this.tunnels = [];
     this.live = [];
-    // The listening ports of this computer, or null when the panel cannot read them.
+    // The listening ports of the target computer, or null when the panel cannot read them.
     this.listeners = null;
     // The request count of each row at the last refresh, and the rows whose count went up since then.
     this.counts = new Map();
@@ -83,37 +90,87 @@ export default class Tunnels extends View {
     this.addPortInput = InputState.new({ placeholder: "port" });
     this.addPortInput.on("submit", (_e, cx) => this.submitAdd(cx));
 
-    const ready = configPath().then((path) => {
-      this.path = path;
-      this.io = makeIo(path);
-    });
     cx.spawn(async (cx) => {
-      await ready;
       for (;;) {
-        await this.safely(() => this.reload());
+        await this.safely(() => this.poll());
         cx.notify();
         await cx.sleep(POLL_MS);
       }
     });
+    // watchFolder works only on this computer. On the hub, the poll reads the file.
     cx.spawn(async (cx) => {
-      await ready;
       for (;;) {
-        await watchFolder(dirname(this.path));
+        const io = this.io;
+        if (!io || this.target?.mode !== "local") {
+          await cx.sleep(POLL_MS);
+          continue;
+        }
+        this.watch = watchFolder(dirname(this.path));
+        await this.watch.catch(() => cx.sleep(POLL_MS));
+        this.watch = null;
+        if (io !== this.io) continue;
         await this.safely(() => this.readFile());
         cx.notify();
       }
     });
   }
 
+  /** The message of a blocked target, or null. */
+  blocked() {
+    return this.target?.mode === "blocked" ? this.target.message : null;
+  }
+
+  /** Read hub.json, make a new io when the target changed, and read the state. */
+  async poll() {
+    const target = await loadTarget(readTextFile, appHome());
+    if (JSON.stringify(target) !== JSON.stringify(this.target)) this.useTarget(target);
+    const current = this.target;
+    if (current.mode === "blocked") return;
+    if (!this.io) {
+      const path = await configPath(current);
+      // A newer poll can change the target while this one waits.
+      if (current !== this.target) return;
+      if (!this.io) {
+        this.path = path;
+        this.io = makeIo(path, current);
+      }
+    }
+    await this.reload();
+  }
+
+  /** Forget the state of the old target. */
+  useTarget(target) {
+    this.target = target;
+    this.io = null;
+    this.path = null;
+    this.watch?.cancel();
+    this.tunnels = [];
+    this.live = [];
+    this.listeners = null;
+    this.counts = new Map();
+    this.hot = new Set();
+    this.rows = [];
+    this.fileError = null;
+    this.messages = {};
+    this.editing = null;
+    this.adding = false;
+    this.confirmRemove = null;
+  }
+
   async readFile() {
-    const parsed = parseConfig(await this.io.read());
+    const io = this.io;
+    const parsed = parseConfig(await io.read());
+    if (io !== this.io) return;
     this.tunnels = parsed.tunnels;
     this.fileError = parsed.error;
     this.rows = mergeRows(this.tunnels, this.live, this.listeners);
   }
 
   async readLive() {
-    [this.live, this.listeners] = await Promise.all([this.io.live(), this.io.listeners()]);
+    const io = this.io;
+    const [live, listeners] = await Promise.all([io.live(), io.listeners()]);
+    if (io !== this.io) return;
+    [this.live, this.listeners] = [live, listeners];
     const rows = mergeRows(this.tunnels, this.live, this.listeners);
     this.hot = rising(this.counts, rows);
     this.counts = new Map(rows.filter((r) => r.count !== null).map((r) => [r.key, r.count]));
@@ -125,7 +182,8 @@ export default class Tunnels extends View {
       await load();
       this.loadError = null;
     } catch (e) {
-      this.loadError = String(e?.message ?? e);
+      // On the hub, a failed command means that the hub does not answer.
+      this.loadError = hubError(this.target ?? LOCAL, String(e?.message ?? e));
     }
     this.loading = false;
   }
@@ -137,12 +195,10 @@ export default class Tunnels extends View {
   }
 
   refresh(cx) {
-    if (!this.io) return;
     this.loading = true;
     cx.notify();
     cx.spawn(async (cx) => {
-      await this.safely(() => this.reload());
-      this.loading = false;
+      await this.safely(() => this.poll());
       cx.notify();
     });
   }
@@ -159,13 +215,13 @@ export default class Tunnels extends View {
       try {
         outcome = await applyEdit(this.io, edit);
       } catch (e) {
-        outcome = { ok: false, error: String(e?.message ?? e), note: null };
+        outcome = { ok: false, error: hubError(this.target ?? LOCAL, String(e?.message ?? e)), note: null };
       }
       const text = outcome.error ?? outcome.note;
       if (text) this.messages[key] = { tone: outcome.error ? "error" : "note", text };
       if (outcome.ok) after();
       this.busy = null;
-      await this.safely(() => this.reload());
+      await this.safely(() => this.poll());
       cx.notify();
     });
   }
@@ -349,6 +405,7 @@ export default class Tunnels extends View {
   render() {
     const t = theme();
     if (narrow()) return div().size_full().bg(t.chrome).border_t(1).border_color(t.border);
+    const blocked = this.blocked();
     const icon = svg("mods/ngrok/refresh.svg").size(12).flex_none().text_color(t.dim);
     const headerButton = (id, tooltip, onClick, child) => div().id(id).w(20).h(20).flex().items_center().justify_center().rounded(5).cursor_pointer()
       .hover((s) => s.bg(t.hover))
@@ -361,12 +418,13 @@ export default class Tunnels extends View {
       .child(h_flex().h(41).pt(14).pb(5).flex_none().pl(16).pr(10).items_center().justify_between()
         .child(div().text_size(11.5).font_medium().text_color(t.dim).child("Tunnels"))
         .child(h_flex().gap(2).items_center()
-          .when(!this.fileError, (e) => e.child(headerButton("ngrok-add", "Add a tunnel", (cx) => this.startAdd(cx),
+          .when(!this.fileError && !blocked, (e) => e.child(headerButton("ngrok-add", "Add a tunnel", (cx) => this.startAdd(cx),
             div().text_size(14).text_color(t.dim).child("+"))))
           .child(headerButton("ngrok-refresh", "Load again", (cx) => this.refresh(cx), this.loading ? icon.spin(900) : icon))))
+      .when(Boolean(blocked), (e) => e.child(div().flex_none().px(16).py(4).text_size(11).text_color(t.dim).child(blocked)))
       .when(Boolean(this.fileError || this.loadError), (e) =>
         e.child(div().flex_none().px(16).py(4).text_size(11).text_color(t.ansi1).child(this.fileError ?? this.loadError)))
-      .when(!this.loading && !this.fileError && this.rows.length === 0 && !this.adding, (e) =>
+      .when(!this.loading && !blocked && !this.fileError && this.rows.length === 0 && !this.adding, (e) =>
         e.child(div().flex_none().px(16).py(4).text_size(11).text_color(t.dim).child("No tunnels in the config.")))
       .child(v_flex().id("ngrok-list").flex_1().min_h(0).px(8).overflow_y_scrollbar()
         .children(groupRows(this.rows).flatMap((group) => [this.groupHeader(group.domain, t), ...group.rows.map((row) => this.row(row, t))]))

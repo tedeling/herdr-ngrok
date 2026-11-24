@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseConfig } from "./config.js";
-import { agentError, chooseAgent, controlsOf, domainOf, groupRows, localTip, mergeRows, parseLive, parseLsof, parseSs, postBody, rising, shortName } from "./state.js";
+import { agentError, chooseAgent, controlsOf, domainOf, groupRows, listenerCommand, localTip, mergeRows, parseLive, parseLsof, parseSs, postBody, rising, shortName } from "./state.js";
 import { FILE } from "./fixture.js";
 
 const live = (apiPort, name, host, port) => ({ apiPort, name, host, port });
@@ -119,4 +119,10 @@ test("controlsOf: the buttons replace the note on the row under the pointer", ()
   assert.deepEqual(controlsOf(down, at(false, true, false)), { note: false, sync: false, remove: "remove?" });
   assert.deepEqual(controlsOf({ state: "outside" }, at(true, false, false)), { note: true, sync: false, remove: null });
   assert.deepEqual(controlsOf(down, at(true, false, true)), { note: true, sync: false, remove: null });
+});
+
+test("listenerCommand: lsof on Darwin, ss elsewhere", () => {
+  assert.deepEqual(listenerCommand("Darwin"), { command: "lsof", args: ["-nP", "-iTCP", "-sTCP:LISTEN", "-F", "pcn"], parse: parseLsof });
+  assert.deepEqual(listenerCommand("Linux"), { command: "ss", args: ["-ltnpH"], parse: parseSs });
+  assert.equal(listenerCommand("FreeBSD").command, "ss");
 });

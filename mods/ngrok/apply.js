@@ -12,6 +12,8 @@ const UNDO_FAILED = "The panel could not undo the change in the file.";
 const DOWN = "The tunnel is down. Restart ngrok to start it again.";
 export const PROBE_PREFIX = "herdr-probe-";
 
+// Io.write rejects when the file changed (STALE). It rejects with an error whose `hub` field is true
+// when the user must see its message, for example when the hub does not answer.
 /**
  * @typedef {import("./state.js").LiveTunnel} LiveTunnel
  * @typedef {{ read(): Promise<string>, write(text: string, expected: string): Promise<void>, check(): Promise<string | null>,
@@ -79,8 +81,9 @@ export async function applyEdit(io, edit) {
   if (changed) {
     try {
       await io.write(text, old);
-    } catch {
-      return fail(STALE);
+    } catch (e) {
+      // An error with the hub field has a message for the user. Each other error means a stale file.
+      return fail(e?.hub ? messageOf(e) : STALE);
     }
     const checkError = await io.check();
     if (checkError) return fail(checkError + (await undo()));

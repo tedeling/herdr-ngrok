@@ -163,6 +163,16 @@ export function parseLsof(text) {
   return listeners;
 }
 
+/**
+ * The command that lists the listening ports, for the output of `uname -s` on the computer that runs it.
+ * @param {string} os
+ */
+export function listenerCommand(os) {
+  return os === "Darwin"
+    ? { command: "lsof", args: ["-nP", "-iTCP", "-sTCP:LISTEN", "-F", "pcn"], parse: parseLsof }
+    : { command: "ss", args: ["-ltnpH"], parse: parseSs };
+}
+
 /** The tooltip of a local light. */
 export function localTip(local) {
   if (!local.listening) return `Nothing listens on ${local.port}`;
