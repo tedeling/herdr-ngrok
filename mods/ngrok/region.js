@@ -76,7 +76,9 @@ export async function editOnHub(hc, target, path, text, expected) {
   } catch (e) {
     throw shown(e.message);
   }
-  const args = ["file", "edit", "--json", "--on", target.machine, path, "--old", region.old, "--new", region.new];
+  // The form --old=<text> keeps a text that starts with "-" as one value. As a separate argument,
+  // hc reads such a text as a flag and stops with a usage error.
+  const args = ["file", "edit", "--json", "--on", target.machine, path, `--old=${region.old}`, `--new=${region.new}`];
   let result;
   try {
     result = await hc(args);

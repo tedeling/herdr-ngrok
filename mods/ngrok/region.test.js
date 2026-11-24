@@ -45,7 +45,19 @@ const json = (o) => JSON.stringify(o);
 test("editOnHub: sends the region with hc file edit", async () => {
   const { hc, calls } = fakeHc({ code: 0, stdout: json({ ok: true }), stderr: "" });
   await editOnHub(hc, TARGET, PATH, OLD.replace("8020", "8021"), OLD);
-  assert.deepEqual(calls, [["file", "edit", "--json", "--on", "desk", PATH, "--old", "        addr: 8020\n", "--new", "        addr: 8021\n"]]);
+  assert.deepEqual(calls, [["file", "edit", "--json", "--on", "desk", PATH, "--old=        addr: 8020\n", "--new=        addr: 8021\n"]]);
+});
+
+test("editOnHub: a region that starts with a dash stays one argument", async () => {
+  const { hc, calls } = fakeHc({ code: 0, stdout: json({ ok: true }), stderr: "" });
+  await editOnHub(hc, TARGET, PATH, "- y\n", "- x\n");
+  assert.deepEqual(calls, [["file", "edit", "--json", "--on", "desk", PATH, "--old=- x\n", "--new=- y\n"]]);
+});
+
+test("editOnHub: a usage error is a hub error, not stale", async () => {
+  const { hc } = fakeHc({ code: 2, stdout: json({ error: { kind: "usage", message: "unexpected argument" } }), stderr: "" });
+  await assert.rejects(editOnHub(hc, TARGET, PATH, OLD.replace("8020", "8021"), OLD),
+    { hub: true, message: "hub.example does not answer (unexpected argument)" });
 });
 
 test("editOnHub: edit_failed is stale", async () => {
