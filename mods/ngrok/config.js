@@ -123,11 +123,17 @@ export function parseConfig(text) {
 const SECRET_KEY = /^api_key$|auth|token|secret|password/i;
 // These bare values are not secrets, for example `inspect: true`. A quoted value always counts.
 const NOT_SECRET = /^(true|false|null|~|[-+]?\d+(\.\d+)?)$/i;
+// The indicator of a block scalar, such as `|`, `>-`, or `|2+`, with an optional comment.
+const BLOCK_SCALAR = /^[|>][-+0-9]*(\s+#.*)?$/;
+const FIELD = /^["']?([A-Za-z_][\w.-]*)["']?\s*:(?:\s+(.*))?$/;
 
 /**
  * The values of the secret fields, so that a message can hide them and an edit can stay away from
- * them. A secret field is a key that SECRET_KEY matches. Its value counts, and each item of a list
- * under it counts, as a block list (`- "user:pass"`) or as an inline list (`["user:pass"]`).
+ * them. A secret field is a key that SECRET_KEY matches. These parts of its value count:
+ * - a value on the line of the key, and each item of an inline list (`["user:pass"]`);
+ * - each item of a block list under it, also at the indent of the key (`- "user:pass"`);
+ * - a value on the lines under it;
+ * - each line of a block scalar (`|` or `>`), but not the indicator.
  */
 export function secretsOf(text) {
   const secrets = [];
@@ -136,28 +142,40 @@ export function secretsOf(text) {
     const bare = !/^["']/.test(raw.trim());
     if (value && !(bare && NOT_SECRET.test(value))) secrets.push(value);
   };
-  // The indent of the secret key whose block the loop reads now, or -1.
-  let blockIndent = -1;
+  /** The secret keys whose value block the loop reads now, the innermost last. @type {{ indent: number, scalar: boolean }[]} */
+  const open = [];
   for (const raw of text.split("\n")) {
     const line = plainLine(raw);
-    if (isBlank(line) || isComment(line)) continue;
+    if (isBlank(line)) continue;
     const indent = indentOf(line);
-    if (blockIndent >= 0 && indent <= blockIndent) blockIndent = -1;
-    const item = blockIndent >= 0 ? /^-\s+(.*)$/.exec(line.trim()) : null;
-    if (item) {
-      add(item[1]);
+    const body = line.trim();
+    const item = /^-(?:\s+(.*))?$/.exec(body);
+    // A block ends at a line with no more indent than its key. A list item at the indent of the key
+    // still belongs to the key (YAML allows an indentless list).
+    while (open.length && !(indent > open.at(-1).indent || (indent === open.at(-1).indent && item && !open.at(-1).scalar))) open.pop();
+    const inside = open.at(-1);
+    if (inside?.scalar) {
+      // Each line of a block scalar is text, also a line that looks like a comment.
+      secrets.push(body);
       continue;
     }
-    const field = /^["']?([A-Za-z_][\w.-]*)["']?\s*:(?:\s+(.*))?$/.exec(line.trim());
-    if (!field || !SECRET_KEY.test(field[1])) continue;
-    const value = (field[2] ?? "").trim();
-    if (value === "" || value.startsWith("#")) {
-      if (blockIndent < 0) blockIndent = indent;
-    } else if (value.startsWith("[")) {
-      value.replace(/\]\s+#.*$/, "]").replace(/^\[|\]$/g, "").split(",").forEach(add);
-    } else {
-      add(value);
+    if (isComment(line)) continue;
+    if (inside && item) {
+      if (item[1]) add(item[1]);
+      continue;
     }
+    const field = FIELD.exec(body);
+    if (!field) {
+      // A value on the lines under a secret key.
+      if (inside) add(body);
+      continue;
+    }
+    if (!SECRET_KEY.test(field[1])) continue;
+    const value = (field[2] ?? "").trim();
+    if (value === "" || value.startsWith("#")) open.push({ indent, scalar: false });
+    else if (BLOCK_SCALAR.test(value)) open.push({ indent, scalar: true });
+    else if (value.startsWith("[")) value.replace(/\]\s+#.*$/, "]").replace(/^\[|\]$/g, "").split(",").forEach(add);
+    else add(value);
   }
   return secrets;
 }

@@ -50,3 +50,15 @@ test("secretsOf: a skip: true style value does not count", () =>
   assert.deepEqual(secretsOf("auth_skip: true\ntoken_ttl: 300\npassword_set: False\nsecret: null\noauth: ~\nbasic_auth: [1, true]\n"), []));
 
 test("redact: hides a basic_auth item", () => assert.equal(redact('bad "u:p"', secretsOf(FILE)), 'bad "<secret>"'));
+
+test("secretsOf: an indentless list at the indent of its key", () =>
+  assert.deepEqual(secretsOf('    a:\n        basic_auth:\n        - "user:pass"\n        - other:word\n        addr: 1\n        - "not:this"\n'),
+    ["user:pass", "other:word"]));
+
+test("secretsOf: a value on the next line", () =>
+  assert.deepEqual(secretsOf("authtoken:\n  abc123\nregion: eu\n"), ["abc123"]));
+
+test("secretsOf: a block scalar gives its lines, never the indicator", () => {
+  assert.deepEqual(secretsOf("authtoken: |\n  abc\n  # def\nregion: eu\n"), ["abc", "# def"]);
+  assert.deepEqual(secretsOf("    password: >-\n        p1\n    addr: 1\n"), ["p1"]);
+});
